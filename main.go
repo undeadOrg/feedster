@@ -13,10 +13,11 @@ import (
 	"syscall"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
+
+	"github.com/Shopify/sarama"
 )
 
 var debug bool
@@ -25,7 +26,7 @@ var buildNum string
 // server - Configuration for Service - I don't like keys/tokens in server struct.server.server.server
 type server struct {
 	log         *log.Entry
-	kafkaClient *kgo.Client
+	kafkaClient sarama.SyncProducer
 	kafkaTopic  string
 }
 
@@ -48,7 +49,7 @@ func getTwitterClient(ctx context.Context) (*http.Client, error) {
 }
 
 // NewServer - Create Server instance with Logger and Kafka Client
-func NewServer(brokers, topic *string, metrics *Metrics) (*server, error) {
+func NewServer(brokers, topic *string) (*server, error) {
 	if debug {
 		log.SetFormatter(&log.TextFormatter{})
 		log.SetLevel(log.DebugLevel)
@@ -63,14 +64,14 @@ func NewServer(brokers, topic *string, metrics *Metrics) (*server, error) {
 
 	b := *brokers
 	t := *topic
-	opts := []kgo.Opt{
-		kgo.SeedBrokers(strings.Split(b, ",")...),
-		kgo.WithHooks(metrics),
-		kgo.DefaultProduceTopic(t),
-		//kgo.WithLogger(logger),
-	}
 
-	client, err := kgo.NewClient(opts...)
+	// Setup Sarama client for kafka
+	config := sarama.NewConfig()
+	config.Producer.Partitioner = sarama.NewRandomPartitioner
+	config.Producer.RequiredAcks = sarama.WaitForAll
+	config.Producer.Retry.Max = 3
+	config.Producer.Return.Successes = true
+	client, err := sarama.NewSyncProducer(strings.Split(b, ","), config)
 	if err != nil {
 		return &server{}, fmt.Errorf("Error with Kafka Client: %v", err)
 	}
@@ -98,15 +99,21 @@ func main() {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 
-	// Metrics
-	metrics := NewMetrics("kgo")
+	// Metrics - To be redon
+	//metrics := NewMetrics("kgo")
 
 	// Setup Server
-	server, err := NewServer(brokers, topic, metrics)
+	server, err := NewServer(brokers, topic)
 	if err != nil {
-		server.log.Error("Error Setting Up Server: ", err)
+		log.Info("Error Setting Up Server: ", err)
+		os.Exit(1)
 	}
+	defer server.kafkaClient.Close()
+
 	server.log.Info("Starting Server...")
+	server.log.WithFields(log.Fields{
+		"brokers": brokers,
+	}).Info("Connecting To Brokers")
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
@@ -136,7 +143,7 @@ func main() {
 
 	// Start HTTP Server for metrics/status
 	http.HandleFunc("/", handler) // http://127.0.0.1:8080/Go
-	http.Handle("/metrics", metrics.Handler())
+	//http.Handle("/metrics", metrics.Handler())
 
 	server.log.Info("Starting Web Server on port: ", port)
 	server.log.Fatal(http.ListenAndServe(port, nil))
@@ -169,12 +176,28 @@ func (s *server) run(ctx context.Context, track []string) {
 	s.log.Debug("Conntected to Twitter, Streaming Messages...")
 	// Iterate on messages, catch cancel callout
 	for message := range stream.Messages {
-		s.log.Debug("Im in message for loop")
+		s.log.Debug("")
 		// Probably dont write the whole json?
 		data, _ := json.Marshal(message)
-		record := &kgo.Record{Topic: s.kafkaTopic, Value: []byte(data)}
-		if err := s.kafkaClient.ProduceSync(ctx, record).FirstErr(); err != nil {
-			s.log.Error("Error Writing to Kafka: %v", err)
+		message := &sarama.ProducerMessage{
+			Topic:     s.kafkaTopic,
+			Partition: -1,
+			Value:     sarama.StringEncoder(data),
+		}
+		partition, offset, err := s.kafkaClient.SendMessage(message)
+		logger := s.log.WithFields(log.Fields{
+			"topic":     s.kafkaTopic,
+			"partition": partition,
+			"offset":    offset,
+		})
+		if err != nil {
+			logger.WithFields(log.Fields{
+				"status": "error",
+			}).Info("Error Writing to Kafka", err)
+		} else {
+			logger.WithFields(log.Fields{
+				"status": "success",
+			}).Debug("Added Tweet to Kafka")
 		}
 	}
 }

@@ -17,8 +17,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -v ./...
 
 
 FROM base as build
+
+ARG BUILD_NUM=dev
+
 # Build the binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /go/bin/feedster *.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 && \
+  go build -o /go/bin/feedster -ldflags "-X main.buildNum=$BUILD_NUM" *.go
 
 
 FROM alpine:3 as release
