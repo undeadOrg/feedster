@@ -1,0 +1,65 @@
+name: Build Docker Image for Head of main 
+
+on:
+  push:
+    branches:
+      - "main" 
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: undeadorg/feedster
+
+jobs:
+  # define job to build and publish docker image
+  build-docker-image:
+    name: Build Docker image
+    # run only when code is compiling and tests are passing
+    runs-on: ubuntu-latest
+
+    # steps to perform in job
+    steps:
+      - uses: kvrhdn/gha-buildevents@v1
+        with:
+          apikey: ${{ secrets.BUILDEVENTS_APIKEY }}
+          dataset: dumpster-buildevents
+          job-status: ${{ job.status }}
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          echo "STEP_ID=0" >> $GITHUB_ENV
+          echo "STEP_START=$(date +%s)" >> $GITHUB_ENV
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Get smart tag
+        id: prepare
+        uses: Surgo/docker-smart-tag-action@v1
+        with:
+          docker_image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} 
+          tag_with_sha: true
+
+      - name: Build and push Docker image
+        id: build_push
+        uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
+        with:
+          context: .
+          push: false 
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+            ${{ steps.prepare.outputs.tag }} 
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Image digest
+        run: echo ${{ steps.build_push.outputs.digest }}
+

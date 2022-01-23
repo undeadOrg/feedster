@@ -1,0 +1,4 @@
+# What should not be checked in
+.env
+
+feedster
