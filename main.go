@@ -176,7 +176,6 @@ func (s *server) run(ctx context.Context, track []string) {
 	s.log.Debug("Conntected to Twitter, Streaming Messages...")
 	// Iterate on messages, catch cancel callout
 	for message := range stream.Messages {
-		s.log.Debug("")
 		// Probably dont write the whole json?
 		data, _ := json.Marshal(message)
 		message := &sarama.ProducerMessage{
