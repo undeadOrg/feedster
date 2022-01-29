@@ -187,8 +187,8 @@ func (s *server) run(ctx context.Context, track []string) {
 			Value:     sarama.StringEncoder(data),
 		}
 		partition, offset, err := s.kafkaClient.SendMessage(message)
-		s.metrics.tweetsProcess.WithLabelValues(s.kafkaTopic).Observe(float64(time.Since(start).Nanoseconds()))
-		s.metrics.tweetsWriteBytes.WithLabelValues(s.kafkaTopic).Observe(float64(len(data)))
+		s.metrics.tweetsProcess.WithLabelValues(strings.Join(track, ",")).Observe(float64(time.Since(start).Nanoseconds()))
+		s.metrics.tweetsWriteBytes.WithLabelValues(strings.Join(track, ",")).Observe(float64(len(data)))
 		logger := s.log.WithFields(log.Fields{
 			"topic":     s.kafkaTopic,
 			"partition": partition,
@@ -199,7 +199,7 @@ func (s *server) run(ctx context.Context, track []string) {
 				"status": "error",
 			}).Info("Error Writing to Kafka", err)
 		} else {
-			s.metrics.tweets.WithLabelValues(s.kafkaTopic).Inc()
+			s.metrics.tweets.WithLabelValues(strings.Join(track, ",")).Inc()
 			logger.WithFields(log.Fields{
 				"status": "success",
 			}).Debug("Added Tweet to Kafka")

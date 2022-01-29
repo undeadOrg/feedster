@@ -6,7 +6,7 @@ import (
 )
 
 type Metrics struct {
-	reg              *prometheus.Registry
+	reg              prometheus.Registerer
 	tweets           *prometheus.CounterVec
 	tweetsProcess    *prometheus.HistogramVec
 	tweetsWrite      *prometheus.HistogramVec
@@ -14,36 +14,35 @@ type Metrics struct {
 }
 
 func NewMetrics() *Metrics {
-	namespace := "feedster"
-
-	reg := prometheus.NewRegistry()
+	reg := prometheus.DefaultRegisterer
 	factory := promauto.With(reg)
 
-	return &Metrics{
+	metrics := &Metrics{
 		reg: reg,
-
 		tweets: factory.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "tweets_total",
-			Help:      "Total number of tweets processed by process",
-		}, []string{"tracks"}),
+			Name: "tweets_total",
+			Help: "Total number of tweets",
+		}, []string{"filter"}),
 
 		tweetsProcess: factory.NewHistogramVec(prometheus.HistogramOpts{
-			Namespace: namespace,
-			Name:      "tweets_processing",
-			Help:      "Time for processing tweet, marshalling it to json for writing to Kafka",
-		}, []string{"tracks"}),
+			Name: "tweets_processing",
+			Help: "Time for processing tweet, marshalling it to json and writing to Kafka",
+		}, []string{"filter"}),
 
 		tweetsWrite: factory.NewHistogramVec(prometheus.HistogramOpts{
-			Namespace: namespace,
-			Name:      "tweets_write",
-			Help:      "Time for writing tweet to Kafka",
-		}, []string{"tracks"}),
+			Name: "tweets_write",
+			Help: "Time for writing tweet to Kafka",
+		}, []string{"filter"}),
 
 		tweetsWriteBytes: factory.NewHistogramVec(prometheus.HistogramOpts{
-			Namespace: namespace,
-			Name:      "tweets_write_bytes",
-			Help:      "Size in Bytes for what was written to Kafka",
-		}, []string{"tracks"}),
+			Name: "tweets_write_bytes",
+			Help: "Size in Bytes for what was written to Kafka",
+		}, []string{"filter"}),
 	}
+
+	//metrics.reg.MustRegister(metrics.tweets)
+	//metrics.reg.MustRegister(metrics.tweetsProcess)
+	//metrics.reg.MustRegister(metrics.tweetsWrite)
+	//metrics.reg.MustRegister(metrics.tweetsWriteBytes)
+	return metrics
 }
