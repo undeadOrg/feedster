@@ -11,7 +11,9 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/dghubble/go-twitter/twitter"
@@ -28,6 +30,7 @@ type server struct {
 	log         *log.Entry
 	kafkaClient sarama.SyncProducer
 	kafkaTopic  string
+	metrics     *Metrics
 }
 
 func getTwitterClient(ctx context.Context) (*http.Client, error) {
@@ -80,6 +83,7 @@ func NewServer(brokers, topic *string) (*server, error) {
 		log:         logger,
 		kafkaClient: client,
 		kafkaTopic:  t,
+		metrics:     NewMetrics(),
 	}
 
 	return s, nil
@@ -98,9 +102,6 @@ func main() {
 	// Setup Connection timeouts
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
-
-	// Metrics - To be redon
-	//metrics := NewMetrics("kgo")
 
 	// Setup Server
 	server, err := NewServer(brokers, topic)
@@ -143,7 +144,7 @@ func main() {
 
 	// Start HTTP Server for metrics/status
 	http.HandleFunc("/", handler) // http://127.0.0.1:8080/Go
-	//http.Handle("/metrics", metrics.Handler())
+	http.Handle("/metrics", promhttp.Handler())
 
 	server.log.Info("Starting Web Server on port: ", port)
 	server.log.Fatal(http.ListenAndServe(port, nil))
@@ -176,6 +177,8 @@ func (s *server) run(ctx context.Context, track []string) {
 	s.log.Debug("Conntected to Twitter, Streaming Messages...")
 	// Iterate on messages, catch cancel callout
 	for message := range stream.Messages {
+		// Start timer for Marshalling
+		start := time.Now()
 		// Probably dont write the whole json?
 		data, _ := json.Marshal(message)
 		message := &sarama.ProducerMessage{
@@ -184,6 +187,8 @@ func (s *server) run(ctx context.Context, track []string) {
 			Value:     sarama.StringEncoder(data),
 		}
 		partition, offset, err := s.kafkaClient.SendMessage(message)
+		s.metrics.tweetsProcess.WithLabelValues(s.kafkaTopic).Observe(float64(time.Since(start).Nanoseconds()))
+		s.metrics.tweetsWriteBytes.WithLabelValues(s.kafkaTopic).Observe(float64(len(data)))
 		logger := s.log.WithFields(log.Fields{
 			"topic":     s.kafkaTopic,
 			"partition": partition,
@@ -194,6 +199,7 @@ func (s *server) run(ctx context.Context, track []string) {
 				"status": "error",
 			}).Info("Error Writing to Kafka", err)
 		} else {
+			s.metrics.tweets.WithLabelValues(s.kafkaTopic).Inc()
 			logger.WithFields(log.Fields{
 				"status": "success",
 			}).Debug("Added Tweet to Kafka")
